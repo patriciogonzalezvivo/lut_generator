@@ -11,7 +11,7 @@ import colour
 from colour_checker_detection import detect_colour_checkers_segmentation
 
 colour.plotting.colour_style()
-colour.utilities.describe_environment();
+# colour.utilities.describe_environment()
 
 # colour.plotting.plot_image(colour.cctf_encoding(image));
 D65 = colour.CCS_ILLUMINANTS['CIE 1931 2 Degree Standard Observer']['D65']
@@ -37,37 +37,57 @@ def newRainbow():
                 counter+=1
     return rainbow
 
+
 # lut size of 64; 33 is also a common option for some other apps
-def newLUT(ls=64):
+def identity(ls=64):
     r=0
     g=0
     b=0
     img = np.zeros((ls*ls*ls,3), np.float32)
     for x in range(0,ls*ls*ls): # create a neutral LUT first
-        if r>=ls:
-            r=0
-            g+=1
-        if g>=ls:
-            g=0
-            b+=1
-        img[x,0]=1/(ls-1)*r
-        img[x,1]=1/(ls-1)*g
-        img[x,2]=1/(ls-1)*b
+        if r >= ls:
+            r = 0
+            g += 1
+        if g >= ls:
+            g =0
+            b +=1
+        img[x,0] = 1/(ls-1) * r
+        img[x,1] = 1/(ls-1) * g
+        img[x,2] = 1/(ls-1) * b
         r+=1
     img = img.reshape((-1,ls*ls,3))
     return img * 255.0
 
 
+def wrapper(standard, array, _size, _rows=8, _flip=False):
+    if standard == "hald":
+        array = array.reshape(_size**3, _size**3, 3)
+    else:
+        rows = _size
+        if 0 < _rows < _size and _size % _rows == 0:
+            rows = _rows
+        array = array.reshape((rows,int(_size**2/rows+.5),_size**2,_size**2, 3))
+        array = np.concatenate([np.concatenate(array[row], axis=1) for row in range(rows)])
+
+    return (array,np.flipud(array))[_flip]
+
+def applyPoly(image, poly):
+    assert(image.dtype == "float32")
+    for rgb in range(3):
+        p = np.poly1d(poly[rgb])
+        image[:,:,rgb] = p(image[:,:,rgb])
+    return image
+
 ## FIT THE DATA TO OUR MULTIVARIATE FUNCTIONS
-def polyfit3d(rgb,pp,x0):  
-    degrees = [(i, j, k) for i in range(pp) for j in range(pp) for k in range(pp)]  # list of monomials x**i * y**j to use
+def polyfit3d(rgb, degrees, x0):  
+    degrees = [(i, j, k) for i in range(degrees) for j in range(degrees) for k in range(degrees)]  # list of monomials x**i * y**j to use
     matrix = np.stack([np.prod(rgb.T**d, axis=1) for d in degrees], axis=-1)   # stack monomials like columns
-    coeff = np.linalg.lstsq(matrix, x0)[0]    # lstsq returns some additional info we ignore
+    coeff = np.linalg.lstsq(matrix, x0, rcond=-1)[0]    # lstsq returns some additional info we ignore
     #print("Coefficients", coeff)    # in the same order as the monomials listed in "degrees"
     fit = np.dot(matrix, coeff)
     #print(np.sqrt(np.mean((x0-fit)**2)))  ## error
     return coeff
-
+        
 
 ## PREDICT / SOLVE the function for our input data (getting our target data)
 def poly3d(rgb, coeff, pp):  
@@ -77,27 +97,18 @@ def poly3d(rgb, coeff, pp):
     return fit
 
 
-def applyLUT(image):
-    assert(image.dtype == "float32")
-    for rgb in range(3):
-        p = np.poly1d(poly[rgb])
-        print("PRE range:",np.min(image[:,:,rgb]),"-",np.max(image[:,:,rgb]))
-        image[:,:,rgb] = p(image[:,:,rgb])
-        print("POST range:",np.min(image[:,:,rgb]),"-",np.max(image[:,:,rgb]))
-        print()
-    return image
-
-
-def applyLUT2(image, pp, _coes):
+def apply(image, _coes, _degrees):
     sss = np.shape(image[:,:,0])
     rgb = image.reshape(-1,3).T
-    print(np.shape(rgb))
-    Zr = poly3d(rgb,_coes[0], pp).reshape(sss)
-    Zg = poly3d(rgb,_coes[1], pp).reshape(sss)
-    Zb = poly3d(rgb,_coes[2], pp).reshape(sss)
+
+    Zr = poly3d(rgb, _coes[0], _degrees).reshape(sss)
+    Zg = poly3d(rgb, _coes[1], _degrees).reshape(sss)
+    Zb = poly3d(rgb, _coes[2], _degrees).reshape(sss)
+
     image[:,:,0] = Zr
     image[:,:,1] = Zg
     image[:,:,2] = Zb
+    
     return image
 
 
@@ -118,7 +129,7 @@ def compute(filename):
         for i, mask in enumerate(swatch_masks):
             masks_i[mask[0]:mask[1], mask[2]:mask[3], ...] = 1
 
-        colour.plotting.plot_image( colour.cctf_encoding( np.clip(colour_checker_image + masks_i * 0.25, 0, 1)) );
+        # colour.plotting.plot_image( colour.cctf_encoding( np.clip(colour_checker_image + masks_i * 0.25, 0, 1)) );
 
         extracted_palette = np.array(swatches_sRGB).reshape((CHECKER_ROW,CHECKER_COL,3)).astype("uint8") 
         extracted_palette = cv2.cvtColor(extracted_palette, cv2.COLOR_RGB2BGR)
@@ -126,14 +137,13 @@ def compute(filename):
         cv2.imwrite("extracted_palette_{}.png".format(len(SWATCHES)), extracted_palette)
 
         degreesA = 1  # <<====  Number of Polynomial degrees.  1 Recommended. 2 Max.
-
-        poly={}
+        
         colors = ["Red","Green","Blue"]
-        xp = np.linspace(0, 255, 255)
+        poly = {}
         for rgb in range(3):
             www = np.ravel(swatches_sRGB)[rgb::3]
             rrr = np.ravel(SPYDER_sRGB)[rgb::3]
-            
+
             poly[rgb] = np.polyfit(www, rrr, degreesA)
             p = np.poly1d(poly[rgb])
             
@@ -142,15 +152,11 @@ def compute(filename):
             mean = np.mean(power)
             final = np.sqrt(mean)
             print(colors[rgb],"error:",final)
-            # plt.subplot(3,1,rgb+1)
-            # _ = plt.plot(www, rrr, '.', xp, xp, '-', xp, p(xp), '--')
-            # plt.ylim(0,255)
-            # plt.show()
             if (final>30):
                 print("\t ^ High number implies result is not that optimized")
                 continue
-        
-        degreesB=2  ## 2 or 3 only. 3 can lead to overfitting. 2 recommend for most users.
+
+        degreesB = 2  ## 2 or 3 only. 3 can lead to overfitting. 2 recommend for most users.
 
         ## Create more data points using previous step's function; this will help prevent overfitting with our next step.
         rainbow = newRainbow()
@@ -161,9 +167,8 @@ def compute(filename):
             print(colors[rgb],"Pre-Process range:",int(np.min(rainbow[:,rgb])),"-",int(np.max(rainbow[:,rgb])))
             rainbow[:,rgb] = p(rainbow[:,rgb])
             print(colors[rgb],"Post-Process range:",int(np.min(rainbow[:,rgb])),"-",int(np.max(rainbow[:,rgb])))
-            print()
 
-        spyder_sRGB0 = np.vstack((SPYDER_sRGB,rainbow))
+        spyder_sRGB0 = np.vstack((SPYDER_sRGB, rainbow))
 
         r1 = np.ravel(swatches_sRGB0)[0::3].astype(np.float32, copy=False)  # swatches_sRGB
         g1 = np.ravel(swatches_sRGB0)[1::3].astype(np.float32, copy=False)
@@ -174,29 +179,13 @@ def compute(filename):
         b0 = np.ravel(spyder_sRGB0)[2::3].astype(np.float32, copy=False)
 
         rgb = np.array([r1,g1,b1])
-        
+
         ## Generate and Save the functions; one function for each color type
         coes[0] = polyfit3d(rgb, degreesB, r0) 
         coes[1] = polyfit3d(rgb, degreesB, g0)
         coes[2] = polyfit3d(rgb, degreesB, b0)
 
-        # ## PLOT DATA POINTS FOR ANALYSIS
-        # rgb0 = np.array([   poly3d(rgb,coes[0],degreesB),
-        #                     poly3d(rgb,coes[1],degreesB), 
-        #                     poly3d(rgb,coes[2],degreesB)])
-
-        # fig = plt.figure(figsize=(12,6))
-        # ax = axes3d.Axes3D(fig)
-
-        # for i in range(len(rgb[0])):
-        #     ax.plot(  [rgb[0,i],rgb0[0,i]],  [rgb[1,i],rgb0[1,i]],  [rgb[2,i],rgb0[2,i]],  'ro-')
-
-        # ax.scatter3D(rgb0[0],rgb0[1],rgb0[2], c='g')
-        # ax.scatter3D(rgb[0],rgb[1],rgb[2], c='b') 
-
-        # # The graph reflects the transformation of each RGB colour value
-
-        return coes, degreesA
+        return coes, degreesB
     
     return coes, None
 
@@ -204,78 +193,72 @@ def compute(filename):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument('-input', '-i', help="input", type=str, required=True)
+    parser.add_argument('-output', '-o', help="output", type=str, default="lut")
+    parser.add_argument('-target', '-t', help="brightness", type=str, default=None)
+    parser.add_argument('-brightness', '-b', help="brightness", type=float, default=0)
+    parser.add_argument('-size', '-s', help="LUT Cube size", type=int, default=64)
     args = parser.parse_args()
 
     coes, degrees = compute(args.input)
 
-    mb = 0
 
-    ## We are going to download a "neutral" PNG LUT and modify it. You can use your own LUTs instead if you want to modify the code a bit
-    img_file = "neutral-lut.png"
+    if args.target is not None:
+        LUT2 = np.zeros((492)) # LIGHT
+        for y in range(22500,25500):
+            x = int(round((y/100-225)/1 + 1/(1.2**(225-y/100))+225))
+            LUT2[x-226] = int(round(y/100.0))
+        LUT1 = 255-np.flip(LUT2)  # DARK
 
-    # LOAD INTO PYTHON
-    lutimg = cv2.imread(img_file, 1) 
-    lutimg = cv2.cvtColor(lutimg, cv2.COLOR_BGR2RGB)
+        # Load target
+        lutimg = cv2.imread(args.target, 1) 
+        lutimg = cv2.cvtColor(lutimg, cv2.COLOR_BGR2RGB)
 
-    ## ANALYTICS
-    avglum = np.mean(np.sqrt( 0.299*lutimg[:,:,0]**2 + 0.587*lutimg[:,:,1]**2 + 0.114*lutimg[:,:,2]**2 ))  # via: https://stackoverflow.com/questions/596216/formula-to-determine-brightness-of-rgb-color
-    print("PRE PROCESSING - Dynamic range:",np.min(lutimg),"-",np.max(lutimg), ", Average Lumin Value:",avglum)
+        ## ANALYTICS
+        avglum = np.mean(np.sqrt( 0.299*lutimg[:,:,0]**2 + 0.587*lutimg[:,:,1]**2 + 0.114*lutimg[:,:,2]**2 ))  # via: https://stackoverflow.com/questions/596216/formula-to-determine-brightness-of-rgb-color
+        print("PRE PROCESSING - Dynamic range:",np.min(lutimg),"-",np.max(lutimg), ", Average Lumin Value:",avglum)
 
-    lutimg = lutimg.astype(np.float32, copy=False)
+        lutimg = lutimg.astype(np.float32, copy=False)
 
-    ## If we want to increase the brightness
-    ## We will use what was set earlier if not defined below
-    # mb = 0 # default
-    if (mb!=0):
-        print()
-        print("\tfyi: Brightness is being adjusted from default; adding",str(mb),"more brightness")
-    
-    print()
-    print(" R-> G-> B-> ")
-    print()
+        ## If we want to increase the brightness
+        ## We will use what was set earlier if not defined below
+        if (args.brightness != 0):
+            print("\tfyi: Brightness is being adjusted from default; adding",str(mb),"more brightness")
 
-    ## APPLY THE COLOR CORRECTION
-    #lutimg = applyLUT(lutimg) + mb
-    lutimg = applyLUT2(lutimg,degrees, coes) + mb  ## Experimental alternative to applyLUT
+        ## APPLY THE COLOR CORRECTION
+        lutimg = apply(lutimg, coes, degrees) + args.brightness  ## Experimental alternative to applyLUT
 
-    ## APPLY HIGHLIGHT GAMMA CURVE
-    where = np.where((lutimg>225) &(lutimg<492))
-    out = LUT2[np.uint16(np.round(lutimg[where]-225))]
-    lutimg[where] = out
+        ## APPLY HIGHLIGHT GAMMA CURVE
+        where = np.where((lutimg>225) &(lutimg<492))
+        out = LUT2[np.uint16(np.round(lutimg[where]-225))]
+        lutimg[where] = out
 
-    ## APPLY SHADOW GAMMA CURVE
-    where = np.where((lutimg<=30) & (lutimg>-461))  
-    out = LUT1[np.uint16(np.round(lutimg[where]+461))]
-    lutimg[where] = out
+        ## APPLY SHADOW GAMMA CURVE
+        where = np.where((lutimg<=30) & (lutimg>-461))  
+        out = LUT1[np.uint16(np.round(lutimg[where]+461))]
+        lutimg[where] = out
 
-    ## CLEAN UP OUT-OF-BOUNDS DATA
-    lutimg[np.where(lutimg>255)]=255 # cut out bad highlights
-    lutimg[np.where(lutimg<0)]=0 # cut out bad shadows
-    lutimg = lutimg.astype(np.uint8, copy=False)
+        ## CLEAN UP OUT-OF-BOUNDS DATA
+        lutimg[np.where(lutimg>255)]=255 # cut out bad highlights
+        lutimg[np.where(lutimg<0)]=0 # cut out bad shadows
+        lutimg = lutimg.astype(np.uint8, copy=False)
 
-    ## ANALYTICS
-    avglum = np.mean(np.sqrt( 0.299*lutimg[:,:,0]**2 + 0.587*lutimg[:,:,1]**2 + 0.114*lutimg[:,:,2]**2 ))  # via: https://stackoverflow.com/questions/596216/formula-to-determine-brightness-of-rgb-color
-    print("POST-PROCESSING - Dynamic range:",np.min(lutimg),"-",np.max(lutimg), ", Average Lumin Value:",avglum)
-    print()
-    print("Done processing!")
-    print("--> RIGHT CLICK IMAGE AND SELECT 'SAVE IMAGE AS' TO SAVE; as .png filetype ideally <--")
-    ## GENERATE THE FINAL LUT
-    # cv2_imshow(cv2.cvtColor(lutimg,cv2.COLOR_RGB2BGR)) 
-    cv2.imwrite("lut.png", lutimg,cv2.COLOR_RGB2BGR)
+        ## ANALYTICS
+        avglum = np.mean(np.sqrt( 0.299*lutimg[:,:,0]**2 + 0.587*lutimg[:,:,1]**2 + 0.114*lutimg[:,:,2]**2 ))  # via: https://stackoverflow.com/questions/596216/formula-to-determine-brightness-of-rgb-color
+        print("POST-PROCESSING - Dynamic range:",np.min(lutimg),"-",np.max(lutimg), ", Average Lumin Value:",avglum)
+        cv2.imwrite(args.target + "_" + args.output + ".png", cv2.cvtColor(lutimg,cv2.COLOR_RGB2BGR))
 
+    lut = identity(args.size)
+    lut = apply(lut, coes, degrees) + args.brightness # apply the basic color correction
 
+    # apply any highlight, shadow, thesholding here... I'm skipping it for now with CUBE luts
+    with open(args.output + '.cube', 'w') as the_file: # save the CUBE LUT to this colab folder I guess
+        the_file.write("LUT_3D_SIZE "+str(args.size)+"\n")
+        lut_hald = (lut/255.0).reshape((-1,3))
+        for x in range(args.size*args.size*args.size):
+            the_file.write("{:1.6f}".format(lut_hald[x,0])+" "+"{:1.6f}".format(lut_hald[x,1])+" "+"{:1.6f}".format(lut_hald[x,2])+'\n')
 
-    # ls = 64
-    # lut = newLUT(ls)
-    # lut = applyLUT2(lut, degrees, coes) + mb # apply the basic color correction
-
-    # # apply any highlight, shadow, thesholding here... I'm skipping it for now with CUBE luts
-    # lut = lut/255.0
-    # lut = lut.reshape((-1,3))
-
-    # with open('result.cube', 'w') as the_file: # save the CUBE LUT to this colab folder I guess
-    #     the_file.write("LUT_3D_SIZE "+str(ls)+"\n")
-    #     for x in range(ls*ls*ls):
-    #         the_file.write("{:1.6f}".format(lut[x,0])+" "+"{:1.6f}".format(lut[x,1])+" "+"{:1.6f}".format(lut[x,2])+'\n')
+    if args.target == None:
+        size = int(np.sqrt(args.size))
+        cv2.imwrite(args.output + ".png", cv2.cvtColor(wrapper("square", lut, size), cv2.COLOR_RGB2BGR))
 
     
