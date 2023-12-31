@@ -21,14 +21,14 @@ def identity(ls=64):
     return img * 255.0
 
 
-def wrapper(standard, array, _size, _rows=8, _flip=False):
+def wrapper(array, size, standard="square", _rows=8, _flip=False):
     if standard == "hald":
-        array = array.reshape(_size**3, _size**3, 3)
+        array = array.reshape(size**3, size**3, 3)
     else:
-        rows = _size
-        if 0 < _rows < _size and _size % _rows == 0:
+        rows = size
+        if 0 < _rows < size and size % _rows == 0:
             rows = _rows
-        array = array.reshape((rows,int(_size**2/rows+.5),_size**2,_size**2, 3))
+        array = array.reshape((rows,int(size**2/rows+.5),size**2,size**2, 3))
         array = np.concatenate([np.concatenate(array[row], axis=1) for row in range(rows)])
 
     return (array,np.flipud(array))[_flip]

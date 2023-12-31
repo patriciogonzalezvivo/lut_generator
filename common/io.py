@@ -13,4 +13,4 @@ def writeLutCube(filename, lut, size):
 
 
 def writeLutImage(filename, lut, size, standard="square"):
-    cv2.imwrite(filename, cv2.cvtColor(wrapper(standard, lut, int(np.sqrt(size))), cv2.COLOR_RGB2BGR))
+    cv2.imwrite(filename, cv2.cvtColor(wrapper(lut, size=int(np.sqrt(size)), standard=standard), cv2.COLOR_RGB2BGR))

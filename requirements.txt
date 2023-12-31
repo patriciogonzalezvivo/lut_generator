@@ -1,3 +1,5 @@
 colour-checker-detection
 color-matcher 
 matplot
+argparse
+opencv-python

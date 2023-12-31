@@ -10,7 +10,7 @@ import scipy.interpolate
 import colour
 from colour_checker_detection import detect_colour_checkers_segmentation
 
-from common.cube import identity, wrapper
+from common.cube import identity
 from common.io import writeLutCube, writeLutImage
 
 colour.plotting.colour_style()
