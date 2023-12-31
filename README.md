@@ -7,6 +7,18 @@ conda activate lut_generator
 pip install -r requirements.txt
 ```
 
+# Create LLUT (`lut.png` and `lut.cube`) from image with color checker (SpyerCheckr24)
+
+```bash
+python from_checker.py -i <image>
+```
+
+# Create LUT from image
+
+```bash
+```
+
+
 # References
 
 * https://github.com/colour-science/colour-checker-detection/blob/master/colour_checker_detection/examples/examples_detection.ipynb

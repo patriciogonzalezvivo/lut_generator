@@ -10,6 +10,9 @@ import scipy.interpolate
 import colour
 from colour_checker_detection import detect_colour_checkers_segmentation
 
+from common.cube import identity, wrapper
+from common.io import writeLutCube, writeLutImage
+
 colour.plotting.colour_style()
 # colour.utilities.describe_environment()
 
@@ -38,45 +41,13 @@ def newRainbow():
     return rainbow
 
 
-# lut size of 64; 33 is also a common option for some other apps
-def identity(ls=64):
-    r=0
-    g=0
-    b=0
-    img = np.zeros((ls*ls*ls,3), np.float32)
-    for x in range(0,ls*ls*ls): # create a neutral LUT first
-        if r >= ls:
-            r = 0
-            g += 1
-        if g >= ls:
-            g =0
-            b +=1
-        img[x,0] = 1/(ls-1) * r
-        img[x,1] = 1/(ls-1) * g
-        img[x,2] = 1/(ls-1) * b
-        r+=1
-    img = img.reshape((-1,ls*ls,3))
-    return img * 255.0
-
-
-def wrapper(standard, array, _size, _rows=8, _flip=False):
-    if standard == "hald":
-        array = array.reshape(_size**3, _size**3, 3)
-    else:
-        rows = _size
-        if 0 < _rows < _size and _size % _rows == 0:
-            rows = _rows
-        array = array.reshape((rows,int(_size**2/rows+.5),_size**2,_size**2, 3))
-        array = np.concatenate([np.concatenate(array[row], axis=1) for row in range(rows)])
-
-    return (array,np.flipud(array))[_flip]
-
 def applyPoly(image, poly):
     assert(image.dtype == "float32")
     for rgb in range(3):
         p = np.poly1d(poly[rgb])
         image[:,:,rgb] = p(image[:,:,rgb])
     return image
+
 
 ## FIT THE DATA TO OUR MULTIVARIATE FUNCTIONS
 def polyfit3d(rgb, degrees, x0):  
@@ -97,7 +68,7 @@ def poly3d(rgb, coeff, pp):
     return fit
 
 
-def apply(image, _coes, _degrees):
+def applyCoes(image, _coes, _degrees):
     sss = np.shape(image[:,:,0])
     rgb = image.reshape(-1,3).T
 
@@ -154,7 +125,7 @@ def compute(filename):
             print(colors[rgb],"error:",final)
             if (final>30):
                 print("\t ^ High number implies result is not that optimized")
-                continue
+                # continue
 
         degreesB = 2  ## 2 or 3 only. 3 can lead to overfitting. 2 recommend for most users.
 
@@ -194,13 +165,12 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument('-input', '-i', help="input", type=str, required=True)
     parser.add_argument('-output', '-o', help="output", type=str, default="lut")
-    parser.add_argument('-target', '-t', help="brightness", type=str, default=None)
+    parser.add_argument('-target', '-t', help="target", type=str, default=None)
     parser.add_argument('-brightness', '-b', help="brightness", type=float, default=0)
     parser.add_argument('-size', '-s', help="LUT Cube size", type=int, default=64)
     args = parser.parse_args()
 
     coes, degrees = compute(args.input)
-
 
     if args.target is not None:
         LUT2 = np.zeros((492)) # LIGHT
@@ -225,7 +195,7 @@ if __name__ == "__main__":
             print("\tfyi: Brightness is being adjusted from default; adding",str(mb),"more brightness")
 
         ## APPLY THE COLOR CORRECTION
-        lutimg = apply(lutimg, coes, degrees) + args.brightness  ## Experimental alternative to applyLUT
+        lutimg = applyCoes(lutimg, coes, degrees) + args.brightness  ## Experimental alternative to applyLUT
 
         ## APPLY HIGHLIGHT GAMMA CURVE
         where = np.where((lutimg>225) &(lutimg<492))
@@ -248,17 +218,8 @@ if __name__ == "__main__":
         cv2.imwrite(args.target + "_" + args.output + ".png", cv2.cvtColor(lutimg,cv2.COLOR_RGB2BGR))
 
     lut = identity(args.size)
-    lut = apply(lut, coes, degrees) + args.brightness # apply the basic color correction
+    lut = applyCoes(lut, coes, degrees) + args.brightness # apply the basic color correction
 
-    # apply any highlight, shadow, thesholding here... I'm skipping it for now with CUBE luts
-    with open(args.output + '.cube', 'w') as the_file: # save the CUBE LUT to this colab folder I guess
-        the_file.write("LUT_3D_SIZE "+str(args.size)+"\n")
-        lut_hald = (lut/255.0).reshape((-1,3))
-        for x in range(args.size*args.size*args.size):
-            the_file.write("{:1.6f}".format(lut_hald[x,0])+" "+"{:1.6f}".format(lut_hald[x,1])+" "+"{:1.6f}".format(lut_hald[x,2])+'\n')
-
+    writeLutCube(args.output + '.cube', lut, args.size)
     if args.target == None:
-        size = int(np.sqrt(args.size))
-        cv2.imwrite(args.output + ".png", cv2.cvtColor(wrapper("square", lut, size), cv2.COLOR_RGB2BGR))
-
-    
+        writeLutImage(args.output + ".png", lut, args.size, standard="square")
